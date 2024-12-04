@@ -254,8 +254,8 @@ export class ExpenseGenerationCounterView2Component {
     pieHole: 0,
     height: '100%',
     slices: {
-      0: { color: '#be95c4' },  // MP siempre azul
-      1: { color: '#00b4d8' },  // STRIPE siempre violeta
+      0: { color: '#00b4d8' },  // MP siempre azul
+      1: { color: '#be95c4' },  // STRIPE siempre violeta
       2: { color: '#80ed99' }   // EFECTIVO siempre verde
     },
     pieSliceTextStyle: {
@@ -266,42 +266,47 @@ export class ExpenseGenerationCounterView2Component {
 
   columnChartOptions = {
     backgroundColor: 'transparent',
-    colors: ['#709775', '#64b6ac'], // Verde para cobrado, Azul claro para facturado
+    colors: ['#709775', '#64b6ac'],
     legend: {
-      display: true,
       position: 'top',
       alignment: 'center',
       textStyle: {
         color: '#6c757d',
-        fontSize: 12
+        fontSize: 15
       },
     },
     chartArea: {
-      width: '85%',
-      height: '70%',
-      top: 60
+      width: '90%',   
+      height: '55%',   
+      top: 30,         
+      left: '12%',    
+      bottom: 80       
     },
     vAxis: {
       title: 'Miles de pesos (ARS)',
       textStyle: {
         color: '#6c757d',
-        fontSize: 12
+        fontSize: 15
       },
-      format: 'decimal', // Cambiar de currency a decimal
+      format: 'decimal',
       viewWindow: {
         min: 0,
       },
-      ticks: {
-        // Personaliza las etiquetas en el eje Y para mostrar "Mil"
-        callback: (value: number) => {
-          return '$' + (value / 1000) + 'Mil'; // Dividir por 1000 y agregar "Mil"
-        }
+      gridlines: {
+        count: 4
       }
     },
     hAxis: {
       title: 'Periodo',
       format: 'MMM yyyy',
-      textStyle: { color: '#6c757d' }
+      textStyle: { 
+        color: '#6c757d',
+        fontSize: 15
+      },
+      slantedText: true,
+      slantedTextAngle: 45,
+      maxTextLines: 1,
+      maxAlternation: 1
     },
     animation: {
       duration: 1000,
@@ -309,14 +314,16 @@ export class ExpenseGenerationCounterView2Component {
       startup: true
     },
     width: '100%',
-    height: '75%',
-    bar: { groupWidth: '70%' },
+    height: '75%',      
+    bar: { 
+      groupWidth: '65%'
+    },
     seriesType: 'bars',
     series: {
       1: { targetAxisIndex: 0, label: 'Facturado' },
       0: { targetAxisIndex: 0, label: 'Cobrado' }
     },
-
+    isStacked: false
   };
 
   ngOnInit() {
@@ -326,6 +333,7 @@ export class ExpenseGenerationCounterView2Component {
         this.counterData = data;
         this.loadPaymentMethods();
         setTimeout(() => this.applyFilters(), 0);
+        this.updatePrincipalKpis();
       },
       error: (error) => {
         console.error('Error:', error);
@@ -354,14 +362,20 @@ export class ExpenseGenerationCounterView2Component {
   selectOwner(id: number, name: string) {
     this.expenseService.getAllExpenses(id).subscribe((expenses) => {
       this.debtorExpenses = expenses
-        .filter((expense) => expense.status !== 'Pago')
+        .filter((expense) => {
+          const expensePeriod = this.convertPeriodToYearMonth(expense.period);
+          return expensePeriod >= this.periodFrom && 
+                 expensePeriod <= this.periodTo &&
+                 expense.status !== 'Pago';
+        })
         .map((expense) => ({
-          owner_id : expense.owner_id,
+          owner_id: expense.owner_id,
           ownerName: name,
           period: expense.period,
           uuid: expense.uuid,
           second_expiration_date: expense.second_expiration_date,
           second_expiration_amount: expense.second_expiration_amount,
+          first_expiration_amount: expense.first_expiration_amount,
           actual_amount: expense.actual_amount,
         } as DebtorExpense));
     });
@@ -383,6 +397,7 @@ export class ExpenseGenerationCounterView2Component {
     this.expenseService.getAllOwners().subscribe({
       next: (owners) => {
         this.owners = owners;
+        console.log("OWNERS: " + this.owners)
       },
       error: (error) => {
         console.error('Error al cargar propietarios:', error);
@@ -430,7 +445,7 @@ export class ExpenseGenerationCounterView2Component {
   
       currentDebtorInfo.totalBills++;
   
-      if (transaction.status !== 'PAGO') {
+      if (transaction.status !== 'Pago') {
         const daysOverdue = this.calculateDaysOverdue(transaction.secondExpirationDate);
         const debtDate = new Date(
           transaction.secondExpirationDate[0],
@@ -456,7 +471,7 @@ export class ExpenseGenerationCounterView2Component {
     });
 
     this.top5Data = debtors;
-    console.log(this.top5Data);
+    console.log("TOP 5 DATA: " +this.top5Data);
   
     return Array.from(debtorsMap.values())
       .filter(debtor => {
@@ -493,6 +508,7 @@ export class ExpenseGenerationCounterView2Component {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }
+  
   getDefaultFromDate(): string {
     const date = new Date();
     date.setMonth(date.getMonth() - 9);
@@ -506,7 +522,6 @@ export class ExpenseGenerationCounterView2Component {
     this.updateTop5Debtors();  
   }
 
-
   private updateDashboard() {
     const monthlyData = this.processMonthlyData();
     this.updateKPIs(monthlyData);
@@ -516,26 +531,29 @@ export class ExpenseGenerationCounterView2Component {
   private processMonthlyData() {
     const months = this.getAllMonthsInRange();
     const monthlyData: { [key: string]: { income: number; projected: number } } = {};
-
+  
     months.forEach(month => {
       monthlyData[month] = { income: 0, projected: 0 };
     });
-
+  
+    // Filtrado para montos proyectados
     this.counterData
       .filter(transaction => {
-        const transactionPeriod = transaction.period;
+        const transactionPeriod = this.convertPeriodToYearMonth(transaction.period);
         return transactionPeriod >= this.periodFrom &&
-          transactionPeriod <= this.periodTo;
+               transactionPeriod <= this.periodTo;
       })
       .forEach(transaction => {
-        if (transaction.period && monthlyData.hasOwnProperty(transaction.period)) {
-          monthlyData[transaction.period].projected += Number(transaction.firstExpirationAmount || 0);
+        const transactionPeriod = this.convertPeriodToYearMonth(transaction.period);
+        if (transactionPeriod && monthlyData.hasOwnProperty(transactionPeriod)) {
+          monthlyData[transactionPeriod].projected += Number(transaction.firstExpirationAmount || 0);
         }
       });
-
+  
+    // Filtrado para ingresos (pagos)
     this.counterData
       .filter(transaction => {
-        const transactionPeriod = transaction.period;
+        const transactionPeriod = this.convertPeriodToYearMonth(transaction.period);
         const platformValue = transaction.paymentPlatform?.toUpperCase() || 'EFECTIVO';
         
         const platformMapping: { [key: string]: string } = {
@@ -547,36 +565,40 @@ export class ExpenseGenerationCounterView2Component {
         const meetsPaymentMethodFilter = 
           this.selectedPaymentMethods.length === 0 || 
           this.selectedPaymentMethods.includes(platformMapping[platformValue]);
-
+  
         return transactionPeriod >= this.periodFrom &&
-          transactionPeriod <= this.periodTo &&
-          meetsPaymentMethodFilter &&
-          transaction.status === 'PAGO';
+               transactionPeriod <= this.periodTo &&
+               meetsPaymentMethodFilter &&
+               (transaction.status === 'Pago' || transaction.status === 'PAGO') &&  
+               transaction.amountPayed != null && 
+               transaction.amountPayed > 0;
       })
       .forEach(transaction => {
-        if (transaction.period && monthlyData.hasOwnProperty(transaction.period)) {
-          monthlyData[transaction.period].income += Number(transaction.amountPayed || 0);
+        const transactionPeriod = this.convertPeriodToYearMonth(transaction.period);
+        if (transactionPeriod && monthlyData.hasOwnProperty(transactionPeriod)) {
+          monthlyData[transactionPeriod].income += Number(transaction.amountPayed || 0);
         }
       });
-
+  
+    console.log('Datos mensuales procesados:', monthlyData);
     return monthlyData;
-}
+  }
 
   private getAllMonthsInRange(): string[] {
     const months: string[] = [];
     const [startYear, startMonth] = this.periodFrom.split('-').map(Number);
     const [endYear, endMonth] = this.periodTo.split('-').map(Number);
-
+  
     let currentDate = new Date(startYear, startMonth - 1);
     const endDate = new Date(endYear, endMonth - 1);
-
+  
     while (currentDate <= endDate) {
       const year = currentDate.getFullYear();
       const month = String(currentDate.getMonth() + 1).padStart(2, '0');
       months.push(`${year}-${month}`);
       currentDate.setMonth(currentDate.getMonth() + 1);
     }
-
+  
     return months;
   }
 
@@ -614,7 +636,6 @@ export class ExpenseGenerationCounterView2Component {
       }
     });
 
-    // Actualizar KPIs
     this.columnKpis[0].amount = totalProjected;
     this.columnKpis[3].amount = totalIncome;
     this.columnKpis[2].amount = maxIncome;
@@ -652,12 +673,11 @@ export class ExpenseGenerationCounterView2Component {
       const meetsApprovalFilter = this.transactionType === 'approved' ?
         transaction.approved :
         !transaction.approved;
-
+  
       return transactionPeriod >= this.periodFrom &&
         transactionPeriod <= this.periodTo &&
         meetsApprovalFilter;
     });
-
     const platformCounts = filteredData.reduce((acc: { [key: string]: number }, curr) => {
       if (this.pieApprovalStatus === 'Aprobado' ? curr.amountPayed > 0 : true) {
         const platform = curr.paymentPlatform || 'EFECTIVO';
@@ -689,7 +709,7 @@ export class ExpenseGenerationCounterView2Component {
         const order = { 'Mp': 0, 'STRIPE': 1, 'Efectivo': 2 };
         return (order[a[0] as keyof typeof order] || 0) - (order[b[0] as keyof typeof order] || 0);
       });
-      console.log(this.pieKpis)
+      console.log("KPIs: " + this.pieKpis)
   }
 
   updateTop5Debtors() {
@@ -699,37 +719,79 @@ export class ExpenseGenerationCounterView2Component {
   }
 
   private updatePrincipalKpis() {
+    console.log('Datos completos de counterData:', this.counterData);
+    console.log('Periodo desde:', this.periodFrom);
+    console.log('Periodo hasta:', this.periodTo);
+    
+    // Log de cada transacción para ver sus propiedades
+    this.counterData.forEach(transaction => {
+      console.log('Transacción individual:', {
+        period: transaction.period,
+        transactionPeriod: this.convertPeriodToYearMonth(transaction.period),
+        status: transaction.status,
+        amountPayed: transaction.amountPayed,
+        firstExpirationAmount: transaction.firstExpirationAmount
+      });
+    });
+  
     const filteredData = this.counterData.filter(transaction => {
       const transactionPeriod = this.convertPeriodToYearMonth(transaction.period);
-      return transactionPeriod >= this.periodFrom && transactionPeriod <= this.periodTo;
+      const isInRange = transactionPeriod >= this.periodFrom && transactionPeriod <= this.periodTo;
+      return isInRange;
     });
-
+  
+    console.log('Datos filtrados:', filteredData);
+  
+    // Usa condiciones más flexibles
     const totalIncome = filteredData
-      .filter(t => t.status === 'PAGO')
+      .filter(t => {
+        console.log('Filtro de ingresos:', {
+          status: t.status, 
+          amountPayed: t.amountPayed,
+          condition: t.status !== null && t.amountPayed > 0
+        });
+        return t.status !== null && t.amountPayed > 0;
+      })
       .reduce((sum, t) => sum + (t.amountPayed || 0), 0);
-
+  
+    console.log('Ingresos totales:', totalIncome);
+  
     const totalDebt = filteredData
-      .filter(t => t.status === 'PENDIENTE')
+      .filter(t => {
+        console.log('Filtro de deudas:', {
+          status: t.status,
+          condition: t.status === null || t.status !== 'PAGO'
+        });
+        return t.status === null || t.status !== 'PAGO';
+      })
       .reduce((sum, t) => sum + (t.firstExpirationAmount || 0), 0);
-
+  
+    console.log('Total de deudas:', totalDebt);
+  
     const delinquentCount = new Set(
       filteredData
-        .filter(t => t.status === 'PENDIENTE')
+        .filter(t => t.status === null || t.status !== 'PAGO')
         .map(t => t.ownerId)
     ).size;
-
+  
+    console.log('Deudores:', delinquentCount);
+  
     const platformCounts = filteredData.reduce((acc, t) => {
-      if (t.status === 'PAGO' && t.amountPayed > 0) {
+      // Condiciones más flexibles
+      if (t.amountPayed > 0) {
         const platform = t.paymentPlatform || 'EFECTIVO';
         acc[platform] = (acc[platform] || 0) + 1;
       }
       return acc;
     }, {} as Record<string, number>);
-
+  
+    console.log('Conteo de plataformas:', platformCounts);
+  
     const topPlatformEntry = Object.entries(platformCounts)
       .sort(([, a], [, b]) => b - a)[0] || ['N/A', 0];
-
-    // Actualizar KPIs principales
+  
+    console.log('Plataforma top:', topPlatformEntry);
+  
     this.principalKpis[0].amount = totalIncome;
     this.principalKpis[1].amount = totalDebt;
     this.principalKpis[2].amount = delinquentCount;
@@ -758,26 +820,15 @@ export class ExpenseGenerationCounterView2Component {
       console.warn('Period inválido:', period);
       return '';
     }
-
     try {
       if (typeof period === 'string' && /^\d{4}-\d{2}$/.test(period)) {
         return period;
       }
-
-      const monthMapping: { [key: string]: string } = {
-        'enero': '01', 'febrero': '02', 'marzo': '03', 'abril': '04',
-        'mayo': '05', 'junio': '06', 'julio': '07', 'agosto': '08',
-        'septiembre': '09', 'octubre': '10', 'noviembre': '11', 'diciembre': '12',
-        'Enero': '01', 'Febrero': '02', 'Marzo': '03', 'Abril': '04',
-        'Mayo': '05', 'Junio': '06', 'Julio': '07', 'Agosto': '08',
-        'Septiembre': '09', 'Octubre': '10', 'Noviembre': '11', 'Diciembre': '12'
-      };
-
-      const [month, year] = period.toString().trim().split(' ');
-      if (monthMapping[month]) {
-        return `${year}-${monthMapping[month]}`;
+      if (typeof period === 'string' && /^\d{2}\/\d{4}$/.test(period)) {
+        const [month, year] = period.split('/');
+        return `${year}-${month.padStart(2, '0')}`;
       }
-
+  
       return '';
     } catch (error) {
       console.warn('Error al convertir periodo:', period, error);
@@ -785,7 +836,7 @@ export class ExpenseGenerationCounterView2Component {
     }
   }
 
-  makeBig(nro: number) {
+  public makeBig(nro: number) {
     this.status = nro;
   }
 }
